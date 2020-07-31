@@ -1,0 +1,71 @@
+---
+- hosts: all
+  gather_facts: true
+  vars:
+    app_dir: "{{ ansible_env.HOME }}/docker/wiki"
+  vars_files:
+    - secrets.yml
+  tasks:
+  - name: get uid
+    command: id -u
+    register: user_id
+  - name: get gid
+    command: id -g
+    register: group_id
+  - name: create directory for wiki docker files
+    file:
+      path: "{{ app_dir }}"
+      state: directory
+  - name: create bookstack network
+    docker_network:
+      name: bookstack
+      internal: yes
+  - name: deploy database container
+    docker_container:
+      name: bookstack_db
+      image: linuxserver/mariadb
+      volumes:
+        - "{{ app_dir }}/data:/config"
+      networks:
+        - name: bookstack
+      purge_networks: yes
+      restart_policy: unless-stopped
+      env:
+        PUID: "{{ user_id.stdout }}"
+        PGID: "{{ group_id.stdout }}"
+        MYSQL_ROOT_PASSWORD: "{{ db_password }}"
+        TZ: "America/Chicago"
+        MYSQL_DATABASE: "bookstack"
+        MYSQL_USER: "{{ db_user }}"
+        MYSQL_PASSWORD: "{{ db_password }}"
+  - name: deploy app container
+    docker_container:
+      name: bookstack
+      image: linuxserver/bookstack
+      exposed_ports:
+        - "80"
+      volumes:
+        - "{{ app_dir }}/config:/config"
+      networks:
+        - name: web
+        - name: bookstack
+      purge_networks: yes
+      restart_policy: unless-stopped
+      labels:
+        traefik.enable: "true"
+        traefik.http.routers.wiki.entrypoints: "websecure"
+        traefik.http.routers.wiki.rule: "Host(`{{ wiki_hostname }}`)"
+        traefik.docker.network: "web"
+        traefik.http.routers.wiki.middlewares: "wiki_redirectscheme"
+        traefik.http.routers.wiki.tls: "true"
+        traefik.http.routers.wiki.tls.certresolver: "myresolver"
+        traefik.http.middlewares.wiki_redirectscheme.redirectscheme.scheme: "https"
+        traefik.http.middlewares.wiki_redirectscheme.redirectscheme.permanent: "true"
+      env:
+        PUID: "{{ user_id.stdout }}"
+        PGID: "{{ group_id.stdout }}"
+        DB_HOST: "bookstack_db"
+        DB_USER: "{{ db_user }}"
+        DB_PASS: "{{ db_password }}"
+        DB_DATABASE: "bookstack"
+        APP_URL: "{{ app_url }}"
