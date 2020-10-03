@@ -12,20 +12,23 @@
   - name: get gid
     command: id -g
     register: group_id
-  - name: create directory for wiki docker files
-    file:
-      path: "{{ app_dir }}"
-      state: directory
   - name: create bookstack network
     docker_network:
       name: bookstack
       internal: yes
+  - name: create database volume
+    docker_volume:
+      name: bookstack_db
+  - name: create app volume
+    docker_volume:
+      name: bookstack_app
   - name: deploy database container
     docker_container:
       name: bookstack_db
       image: linuxserver/mariadb
-      volumes:
-        - "{{ app_dir }}/data:/config"
+      mounts:
+        - target: /config
+          source: bookstack_db
       networks:
         - name: bookstack
       purge_networks: yes
@@ -44,8 +47,9 @@
       image: linuxserver/bookstack
       exposed_ports:
         - "80"
-      volumes:
-        - "{{ app_dir }}/config:/config"
+      mounts:
+        - target: /config
+          source: bookstack_app
       networks:
         - name: web
         - name: bookstack
@@ -53,14 +57,15 @@
       restart_policy: unless-stopped
       labels:
         traefik.enable: "true"
+        traefik.http.middlewares.wiki-https.redirectscheme.scheme: "https"
+        traefik.http.middlewares.wiki-https.redirectscheme.permanent: "true"
+        traefik.http.routers.wiki-http.entrypoints: "web"
+        traefik.http.routers.wiki-http.rule: "Host(`{{ wiki_hostname }}`)"
+        traefik.http.routers.wiki-http.middlewares: "wiki-https@docker"
         traefik.http.routers.wiki.entrypoints: "websecure"
         traefik.http.routers.wiki.rule: "Host(`{{ wiki_hostname }}`)"
-        traefik.docker.network: "web"
-        traefik.http.routers.wiki.middlewares: "wiki_redirectscheme"
         traefik.http.routers.wiki.tls: "true"
         traefik.http.routers.wiki.tls.certresolver: "myresolver"
-        traefik.http.middlewares.wiki_redirectscheme.redirectscheme.scheme: "https"
-        traefik.http.middlewares.wiki_redirectscheme.redirectscheme.permanent: "true"
       env:
         PUID: "{{ user_id.stdout }}"
         PGID: "{{ group_id.stdout }}"
@@ -69,3 +74,4 @@
         DB_PASS: "{{ db_password }}"
         DB_DATABASE: "bookstack"
         APP_URL: "{{ app_url }}"
+
